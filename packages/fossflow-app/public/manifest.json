@@ -26,6 +26,6 @@
   "theme_color": "#2563eb",
   "background_color": "#ffffff",
   "orientation": "portrait-primary",
-  "scope": "/",
+  "scope": "./",
   "categories": ["productivity", "utilities", "graphics"]
 }

@@ -1,64 +1,57 @@
-const CACHE_NAME = 'fossflow-v1';
-const urlsToCache = [
-  '/',
-  '/static/css/main.css',
-  '/static/js/bundle.js',
-  '/manifest.json',
-  '/favicon.ico',
-  '/logo192.png',
-  '/logo512.png'
-];
+// The build replaces these markers with actual files and their content version.
+const PRECACHE_FILES = /* precache-manifest */ [];
+const VERSION = /* precache-version */ 'unbuilt';
+const SCOPE = new URL(self.registration.scope);
+const CACHE_PREFIX = `fossflow:${SCOPE.href}:`;
+const CACHE_NAME = `${CACHE_PREFIX}${VERSION}`;
+const ASSETS = new Set(PRECACHE_FILES.map(path => new URL(path, SCOPE).href));
+const INDEX_URL = new URL('index.html', SCOPE).href;
 
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => {
-        console.log('Opened cache');
-        return cache.addAll(urlsToCache);
-      })
-  );
-});
-
-self.addEventListener('fetch', event => {
-  event.respondWith(
-    caches.match(event.request)
-      .then(response => {
-        if (response) {
-          return response;
-        }
-
-        return fetch(event.request).then(
-          response => {
-            if (!response || response.status !== 200 || response.type !== 'basic') {
-              return response;
-            }
-
-            const responseToCache = response.clone();
-
-            caches.open(CACHE_NAME)
-              .then(cache => {
-                cache.put(event.request, responseToCache);
-              });
-
-            return response;
-          }
-        );
-      })
-  );
+  event.waitUntil((async () => {
+    // Never install the unbuilt template or obsolete hard-coded bundle names.
+    if (!ASSETS.has(INDEX_URL)) throw new Error('Missing build precache manifest');
+    const cache = await caches.open(CACHE_NAME);
+    await cache.addAll([...ASSETS].map(url => new Request(url, { cache: 'reload' })));
+  })());
 });
 
 self.addEventListener('activate', event => {
-  const cacheWhitelist = [CACHE_NAME];
+  event.waitUntil((async () => {
+    const names = await caches.keys();
+    await Promise.all(names
+      .filter(name => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
+      .map(name => caches.delete(name)));
+  })());
+});
 
-  event.waitUntil(
-    caches.keys().then(cacheNames => {
-      return Promise.all(
-        cacheNames.map(cacheName => {
-          if (cacheWhitelist.indexOf(cacheName) === -1) {
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
-  );
+self.addEventListener('fetch', event => {
+  const request = event.request;
+  const url = new URL(request.url);
+  if (request.method !== 'GET' || url.origin !== SCOPE.origin ||
+      !url.pathname.startsWith(SCOPE.pathname)) return;
+
+  // Only the generated static files belong in this cache, never API/user data.
+  url.search = '';
+  const isAppNavigation = request.mode === 'navigate' &&
+    (url.href === SCOPE.href || url.href === INDEX_URL);
+  const assetUrl = isAppNavigation ? INDEX_URL : url.href;
+  if (!ASSETS.has(assetUrl)) return;
+
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    // Navigation stays current online; immutable build assets remain cache-first.
+    if (!isAppNavigation) {
+      const cached = await cache.match(assetUrl);
+      if (cached) return cached;
+    }
+    try {
+      // Do not replace versioned precache contents with another deployment.
+      return await fetch(request);
+    } catch (error) {
+      const cached = await cache.match(assetUrl);
+      if (cached) return cached;
+      throw error;
+    }
+  })());
 });

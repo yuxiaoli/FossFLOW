@@ -51,7 +51,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       pages: write
       id-token: write
@@ -62,3 +62,39 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Check out the deployed commit
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Node.js for live verification
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install verification dependencies
+        run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Download the exact Pages artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: github-pages
+          path: .pages-artifact
+      - name: Extract the deployed files
+        run: |
+          mkdir .pages-export
+          tar -xf .pages-artifact/artifact.tar -C .pages-export
+      - name: Verify live assets, editor and offline cache isolation
+        working-directory: packages/fossflow-app
+        env:
+          BASE_URL: ${{ steps.deployment.outputs.page_url }}
+          BUILD_ROOT: ${{ github.workspace }}/.pages-export
+          DEPLOYED_HEAD: ${{ github.sha }}
+        run: node scripts/verify-pages.mjs
+      - name: Upload live browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-pages-verification
+          path: packages/fossflow-app/qa-results
+          if-no-files-found: ignore
